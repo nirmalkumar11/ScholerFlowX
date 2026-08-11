@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import os
 from pathlib import Path
 from urllib.parse import quote
 
@@ -233,9 +233,11 @@ def frontend_assets(path):
 # Entry point
 # ---------------------------------------------------------------------------
 
+
+
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
-        port=5002,
+        port=int(os.environ.get("PORT", 5002)),
         debug=False,
     )
