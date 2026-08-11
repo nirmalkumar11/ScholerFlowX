@@ -1,0 +1,30 @@
+{
+  "paper_brief": {
+    "topic": "AI Research",
+    "domain": "",
+    "paper_type": "",
+    "objectives": [],
+    "keywords": [],
+    "constraints": []
+  },
+  "research_plan": {
+    "title": "",
+    "outline": [],
+    "research_questions": [],
+    "literature_requirements": []
+  },
+  "literature_corpus": {
+    "papers": []
+  },
+  "citation_package": {
+    "bibtex_content": ""
+  },
+  "manuscript": {
+    "content": ""
+  },
+  "review_report": {
+    "score": 0.0,
+    "comments": [],
+    "accepted": false
+  }
+}

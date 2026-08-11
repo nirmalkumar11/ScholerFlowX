@@ -1,0 +1,11 @@
+Title: AI for Lung Cancer Detection
+
+We propose a deep learning framework for detecting
+lung cancer from CT scans.
+
+Objectives:
+- Improve diagnostic accuracy
+- Reduce false positives
+
+Expected Outcome:
+A publishable research paper.
