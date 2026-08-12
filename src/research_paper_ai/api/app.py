@@ -12,6 +12,7 @@ from research_paper_ai.pipeline.formatter_pipeline import (
 )
 
 
+
 # ============================================================================
 # PATHS
 # ============================================================================
@@ -54,6 +55,18 @@ app = Flask(__name__)
 # ============================================================================
 # CORS
 # ============================================================================
+
+FRONTEND_URL = os.environ.get(
+    "FRONTEND_URL",
+    "*"
+).strip()
+
+CORS(
+    app,
+    origins=FRONTEND_URL,
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
 
 if FRONTEND_URL:
     # Production / configured frontend
@@ -380,13 +393,19 @@ def format_paper():
         # BUILD PUBLIC RESPONSE
         # ====================================================================
 
-        base_url = request.host_url.rstrip("/")
+        base_url = os.environ.get(
+            "PUBLIC_API_URL",
+            "https://scholerflowxx.onrender.com",
+        ).rstrip("/")
 
+     
         response_data = {
             "status": "success",
-            **_public_result_urls(base_url),
+            "pdf_url": f"{base_url}/download/pdf",
+            "latex_url": f"{base_url}/download/tex",
+            "manuscript_url": f"{base_url}/download/manuscript",
+            "bib_url": f"{base_url}/download/bib",
         }
-
         # Add pipeline metadata.
         #
         # We intentionally keep the internal filesystem paths out of the
