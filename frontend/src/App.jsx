@@ -7,7 +7,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 // Relative path: the built frontend is served by the same Flask app,
 // so this resolves against whatever host/port Flask is running on.
-const API_URL = "/format-paper";
+const API_URL = import.meta.env.VITE_API_URL;;
 
 const STAGES = [
   { key: "submit", label: "Submit" },
