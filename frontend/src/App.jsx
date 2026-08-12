@@ -29,6 +29,8 @@ const API_URL = (
 ).replace(/\/+$/, "");
 
 console.log("API_URL =", API_URL);
+console.log("API_URL =", API_URL);
+console.log("FORMAT_ENDPOINT =", FORMAT_ENDPOINT);
 
 
 // ============================================================================
