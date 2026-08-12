@@ -20,9 +20,28 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 OUTPUT_DIR = PROJECT_ROOT / "workspace" / "output"
 
+# Load local .env when running locally.
+# Render uses its Environment Variables instead.
 load_dotenv(PROJECT_ROOT / ".env")
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ============================================================================
+# ENVIRONMENT
+# ============================================================================
+
+PORT = int(os.environ.get("PORT", 5002))
+
+# Your Vercel frontend URL.
+#
+# Local:
+#   FRONTEND_URL=http://localhost:5173
+#
+# Production:
+#   FRONTEND_URL=https://your-vercel-app.vercel.app
+#
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "").strip()
 
 
 # ============================================================================
@@ -31,20 +50,61 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 
-# Allow the Vercel frontend to communicate with this backend.
-#
-# For initial deployment, this allows all origins.
-# After your Vercel URL is known, restrict this to your frontend domain.
-CORS(app)
+
+# ============================================================================
+# CORS
+# ============================================================================
+
+if FRONTEND_URL:
+    # Production / configured frontend
+    CORS(
+        app,
+        origins=[
+            FRONTEND_URL,
+        ],
+        methods=[
+            "GET",
+            "POST",
+            "OPTIONS",
+        ],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+        ],
+    )
+else:
+    # Local development fallback.
+    #
+    # This allows:
+    # http://localhost:5173
+    # http://127.0.0.1:5173
+    #
+    CORS(
+        app,
+        origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
+        methods=[
+            "GET",
+            "POST",
+            "OPTIONS",
+        ],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+        ],
+    )
 
 
 # ============================================================================
 # HELPERS
 # ============================================================================
 
+
 def _file_response(path: Path):
     """
-    Return a generated file or a useful JSON 404 response.
+    Return a generated file or a JSON 404 response.
     """
 
     path = path.resolve()
@@ -64,21 +124,34 @@ def _file_response(path: Path):
 
 def _pipeline_result_to_dict(result):
     """
-    Convert the formatter pipeline result into a JSON-safe dictionary.
+    Convert formatter pipeline result into a JSON-safe dictionary.
 
     Supports:
-    - PipelineResult objects
-    - pathlib.Path
-    - dictionaries
+        - dict
+        - PipelineResult-like objects
+        - pathlib.Path
     """
 
-    if isinstance(result, dict):
-        return {
-            key: str(value) if isinstance(value, Path) else value
-            for key, value in result.items()
-        }
+    # ------------------------------------------------------------------------
+    # Dictionary result
+    # ------------------------------------------------------------------------
 
-    # PipelineResult object
+    if isinstance(result, dict):
+        result_data = {}
+
+        for key, value in result.items():
+
+            if isinstance(value, Path):
+                result_data[key] = str(value)
+            else:
+                result_data[key] = value
+
+        return result_data
+
+    # ------------------------------------------------------------------------
+    # PipelineResult-like object
+    # ------------------------------------------------------------------------
+
     result_data = {}
 
     for attribute in (
@@ -88,32 +161,58 @@ def _pipeline_result_to_dict(result):
         "pdf_file",
     ):
         if hasattr(result, attribute):
+
             value = getattr(result, attribute)
 
             if value is not None:
                 result_data[attribute] = str(value)
 
-    # If the pipeline returns a Path directly
+    # ------------------------------------------------------------------------
+    # Path result
+    # ------------------------------------------------------------------------
+
     if isinstance(result, Path):
         result_data["output_file"] = str(result)
 
+    # ------------------------------------------------------------------------
     # Fallback
+    # ------------------------------------------------------------------------
+
     if not result_data:
         result_data["result"] = str(result)
 
     return result_data
 
 
+def _public_result_urls(base_url: str):
+    """
+    Generate public download URLs.
+
+    Files remain stored on the backend filesystem.
+    """
+
+    return {
+        "pdf_url": f"{base_url}/download/pdf",
+        "latex_url": f"{base_url}/download/tex",
+        "manuscript_url": f"{base_url}/download/manuscript",
+        "bib_url": f"{base_url}/download/bib",
+    }
+
+
 # ============================================================================
 # HEALTH CHECK
 # ============================================================================
+
 
 @app.get("/health")
 def health():
     """
     Health check endpoint.
 
-    Used by Render to verify that the backend is running.
+    Used by:
+        - Render
+        - monitoring
+        - local development
     """
 
     return jsonify({
@@ -126,12 +225,15 @@ def health():
 # FORMAT PAPER
 # ============================================================================
 
+
 @app.post("/format-paper")
 def format_paper():
     """
     Format a research paper.
 
-    Expected request from the Vercel frontend:
+    Primary frontend request:
+
+        POST /format-paper
 
         Content-Type: application/json
 
@@ -139,53 +241,69 @@ def format_paper():
             "paper_content": "..."
         }
 
-    The formatter pipeline receives the extracted paper text.
+    The frontend is expected to extract text from the uploaded PDF
+    and send that text to this API.
+
+    Also supports text / Markdown multipart uploads.
+
+    Direct PDF multipart uploads are intentionally rejected.
     """
 
     try:
+
         paper_content = ""
 
-        # ------------------------------------------------------------------
-        # JSON request
-        # ------------------------------------------------------------------
+        # ====================================================================
+        # JSON REQUEST
+        # ====================================================================
 
         if request.is_json:
-            data = request.get_json(silent=True) or {}
+
+            data = request.get_json(
+                silent=True
+            ) or {}
 
             paper_content = str(
                 data.get("paper_content", "")
             ).strip()
 
-        # ------------------------------------------------------------------
-        # Multipart request
-        # ------------------------------------------------------------------
+        # ====================================================================
+        # MULTIPART REQUEST
+        # ====================================================================
 
         elif "file" in request.files:
+
             uploaded = request.files["file"]
 
+            # ----------------------------------------------------------------
+            # Validate filename
+            # ----------------------------------------------------------------
+
             if not uploaded.filename:
+
                 return jsonify({
                     "status": "error",
                     "message": "No file selected.",
                 }), 400
 
-            # --------------------------------------------------------------
-            # PDF
-            # --------------------------------------------------------------
+            # ----------------------------------------------------------------
+            # Reject direct PDF uploads
+            # ----------------------------------------------------------------
 
             if uploaded.mimetype == "application/pdf":
+
                 return jsonify({
                     "status": "error",
                     "message": (
-                        "Direct PDF upload is not supported by this endpoint. "
+                        "Direct PDF upload is not supported by this API. "
                         "Extract the PDF text in the frontend and send it "
-                        "using the 'paper_content' JSON field."
+                        "as JSON using the 'paper_content' field."
                     ),
                 }), 415
 
-            # --------------------------------------------------------------
-            # Text / Markdown / plain files
-            # --------------------------------------------------------------
+            # ----------------------------------------------------------------
+            # Read text / Markdown
+            # ----------------------------------------------------------------
 
             raw = uploaded.read()
 
@@ -194,81 +312,111 @@ def format_paper():
                 errors="replace",
             ).strip()
 
-        # ------------------------------------------------------------------
-        # Unsupported request
-        # ------------------------------------------------------------------
+        # ====================================================================
+        # INVALID REQUEST
+        # ====================================================================
 
         else:
+
             return jsonify({
                 "status": "error",
                 "message": (
-                    "Send JSON containing a non-empty "
-                    "'paper_content' field."
+                    "Invalid request. Send JSON containing "
+                    "'paper_content'."
                 ),
             }), 400
 
-        # ------------------------------------------------------------------
-        # Validate content
-        # ------------------------------------------------------------------
+        # ====================================================================
+        # VALIDATE PAPER CONTENT
+        # ====================================================================
 
         if not paper_content:
+
             return jsonify({
                 "status": "error",
                 "message": (
-                    "paper_content is required and "
-                    "cannot be empty."
+                    "paper_content is required "
+                    "and cannot be empty."
                 ),
             }), 400
 
-        # ------------------------------------------------------------------
-        # Log request
-        # ------------------------------------------------------------------
+        # ====================================================================
+        # LOG REQUEST
+        # ====================================================================
 
-        print("\n" + "=" * 60)
-        print("FORMATTER PIPELINE")
-        print("=" * 60)
-        print(f"Characters: {len(paper_content):,}")
-        print(f"Output directory: {OUTPUT_DIR}")
-        print("=" * 60)
+        print()
+        print("=" * 70)
+        print("RESEARCH PAPER FORMATTER")
+        print("=" * 70)
 
-        # ------------------------------------------------------------------
-        # Run CrewAI / LiteLLM / Groq pipeline
-        # ------------------------------------------------------------------
+        print(
+            f"Paper characters: {len(paper_content):,}"
+        )
+
+        print(
+            f"Output directory: {OUTPUT_DIR}"
+        )
+
+        print("=" * 70)
+
+        # ====================================================================
+        # RUN FORMATTER PIPELINE
+        # ====================================================================
 
         result = run_formatter_pipeline(
             paper_content=paper_content,
             output_dir=OUTPUT_DIR,
         )
 
-        result_data = _pipeline_result_to_dict(result)
+        # ====================================================================
+        # CONVERT RESULT
+        # ====================================================================
 
-        print("=" * 60)
-        print("PIPELINE COMPLETE")
-        print("=" * 60)
+        result_data = _pipeline_result_to_dict(
+            result
+        )
 
-        # ------------------------------------------------------------------
-        # Build API response
-        # ------------------------------------------------------------------
+        # ====================================================================
+        # BUILD PUBLIC RESPONSE
+        # ====================================================================
 
         base_url = request.host_url.rstrip("/")
 
         response_data = {
             "status": "success",
-
-            "pdf_url": f"{base_url}/download/pdf",
-
-            "latex_url": f"{base_url}/download/tex",
-
-            "manuscript_url": (
-                f"{base_url}/download/manuscript"
-            ),
-
-            "bib_url": f"{base_url}/download/bib",
+            **_public_result_urls(base_url),
         }
 
-        response_data.update(result_data)
+        # Add pipeline metadata.
+        #
+        # We intentionally keep the internal filesystem paths out of the
+        # primary response if possible.
+        #
+        # The frontend should use the *_url fields.
+        for key, value in result_data.items():
 
-        return jsonify(response_data), 200
+            if key.endswith("_file"):
+
+                # Convert filesystem fields to public URLs instead
+                continue
+
+            if key == "output_file":
+                continue
+
+            response_data[key] = value
+
+        # ====================================================================
+        # PIPELINE COMPLETE
+        # ====================================================================
+
+        print()
+        print("=" * 70)
+        print("PIPELINE COMPLETE")
+        print("=" * 70)
+
+        return jsonify(
+            response_data
+        ), 200
 
     except Exception as exc:
 
@@ -285,6 +433,7 @@ def format_paper():
 # ============================================================================
 # DOWNLOAD ENDPOINTS
 # ============================================================================
+
 
 @app.get("/download/pdf")
 def download_pdf():
@@ -311,7 +460,7 @@ def download_tex():
 @app.get("/download/manuscript")
 def download_manuscript():
     """
-    Download generated manuscript.
+    Download generated Markdown manuscript.
     """
 
     return _file_response(
@@ -334,8 +483,10 @@ def download_bib():
 # ERROR HANDLERS
 # ============================================================================
 
+
 @app.errorhandler(404)
 def not_found(error):
+
     return jsonify({
         "status": "error",
         "message": "Endpoint not found.",
@@ -344,6 +495,7 @@ def not_found(error):
 
 @app.errorhandler(405)
 def method_not_allowed(error):
+
     return jsonify({
         "status": "error",
         "message": "HTTP method not allowed.",
@@ -352,9 +504,10 @@ def method_not_allowed(error):
 
 @app.errorhandler(413)
 def request_too_large(error):
+
     return jsonify({
         "status": "error",
-        "message": "Uploaded request is too large.",
+        "message": "Request is too large.",
     }), 413
 
 
@@ -362,14 +515,36 @@ def request_too_large(error):
 # LOCAL DEVELOPMENT
 # ============================================================================
 
+
 if __name__ == "__main__":
 
-    port = int(
-        os.environ.get("PORT", 5002)
+    print()
+    print("=" * 70)
+    print("Research Paper Formatter API")
+    print("=" * 70)
+
+    print(
+        f"Port: {PORT}"
     )
+
+    if FRONTEND_URL:
+        print(
+            f"CORS frontend: {FRONTEND_URL}"
+        )
+    else:
+        print(
+            "CORS: localhost frontend"
+        )
+
+    print(
+        f"Output directory: {OUTPUT_DIR}"
+    )
+
+    print("=" * 70)
+    print()
 
     app.run(
         host="0.0.0.0",
-        port=port,
+        port=PORT,
         debug=False,
     )
